@@ -1,0 +1,87 @@
+# ____________________ 1. PersistentVolumeClaim for Cart DB ____________________
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cart-db-pvc
+  namespace: ecommerce
+spec:
+  resources:
+    requests:
+      storage: 1Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce
+
+---
+
+# ____________________ 2. Deployment for Cart DB ____________________
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cart-db
+  namespace: ecommerce
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cart-db
+  template:
+    metadata:
+      labels:
+        app: cart-db
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - name: POSTGRES_DB
+              value: cart_db
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: DB_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: DB_PASSWORD
+          ports:
+            - containerPort: 5432
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          volumeMounts:
+            - name: cart-db-storage
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", $(POSTGRES_USER), "-d", "cart_db"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      volumes:
+        - name: cart-db-storage
+          persistentVolumeClaim:
+            claimName: cart-db-pvc
+
+---
+
+# ____________________ 3. Service for Cart DB ____________________
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: cart-db
+  namespace: ecommerce
+spec:
+  selector:
+    app: cart-db
+  ports:
+    - port: 5432
+      targetPort: 5432

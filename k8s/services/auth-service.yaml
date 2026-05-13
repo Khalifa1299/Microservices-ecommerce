@@ -1,0 +1,191 @@
+
+# _____________________________ Deployment for Auth Service _____________________________
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: ecommerce
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+    spec:
+      initContainers:
+      - name: migrate
+        image: khalifa035/auth-service:latest
+        command: ["python", "manage.py", "migrate", "--noinput"]
+        env:
+        - name: DB_HOST
+          value: auth-db
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          value: auth_db
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: DB_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: auth-service-secret
+              key: DB_PASSWORD
+        - name: SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: auth-service-secret
+              key: SECRET_KEY
+      containers:
+      - name: auth-service
+        image: khalifa035/auth-service:latest
+        env:
+        - name: DB_HOST
+          value: auth-db
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          value: auth_db
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: DB_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: auth-service-secret
+              key: DB_PASSWORD
+        - name: SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: auth-service-secret
+              key: SECRET_KEY
+        - name: EMAIL_HOST_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: auth-service-secret
+              key: EMAIL_HOST_PASSWORD
+        - name: CELERY_BROKER_URL
+          value: "redis://redis:6379/0"
+        - name: CELERY_RESULT_BACKEND
+          value: "redis://redis:6379/0"
+        - name: DEBUG
+          value: "False"
+        ports:
+        - containerPort: 8001
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        readinessProbe:
+          tcpSocket:
+            port: 8001
+          initialDelaySeconds: 30
+          periodSeconds: 10
+
+---
+
+# _____________________________ Service for Auth Service _____________________________
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: ecommerce
+  labels:
+    app: auth-service
+spec:
+  selector:
+    app: auth-service
+  ports:
+  - name: http
+    protocol: TCP
+    port: 8001
+    targetPort: 8001
+
+---
+
+# _____________________________ Celery Worker for Auth Service _____________________________
+#
+# Runs as a separate pod — same image and env as the web Deployment, different command.
+# Consumes tasks from Redis (send_welcome_email, send_password_reset_email, etc.)
+#
+# WHY a separate Deployment and not a second container in the web pod?
+#   Each container in a pod shares the same lifecycle — if the web process crashes,
+#   K8s restarts the entire pod including the worker. Separate Deployments let K8s
+#   restart and scale each process independently.
+#
+# replicas: 1 is enough for local dev. Scale up when task queue depth grows.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service-worker
+  namespace: ecommerce
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: auth-service-worker
+  template:
+    metadata:
+      labels:
+        app: auth-service-worker
+    spec:
+      containers:
+      - name: celery-worker
+        image: khalifa035/auth-service:latest
+        command: ["celery", "-A", "auth_service", "worker", "--loglevel=info", "--concurrency=2"]
+        env:
+        - name: DB_HOST
+          value: auth-db
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          value: auth_db
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: DB_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: auth-service-secret
+              key: DB_PASSWORD
+        - name: SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: auth-service-secret
+              key: SECRET_KEY
+        - name: EMAIL_HOST_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: auth-service-secret
+              key: EMAIL_HOST_PASSWORD
+        - name: CELERY_BROKER_URL
+          value: "redis://redis:6379/0"
+        - name: CELERY_RESULT_BACKEND
+          value: "redis://redis:6379/0"
+        - name: DEBUG
+          value: "False"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "250m"
+        # No readinessProbe — workers don't serve HTTP traffic, no Service routes to them.
+        # Readiness only controls whether a pod receives traffic from a Service selector.
+        # A livenessProbe to restart stuck workers will be added in Phase 6 (monitoring).

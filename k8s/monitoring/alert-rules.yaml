@@ -1,0 +1,54 @@
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: ecommerce-alerts
+  namespace: ecommerce
+  labels:
+    release: monitoring        # must match the Helm release name
+spec:
+  groups:
+    - name: ecommerce.availability
+      interval: 30s
+      rules:
+        # Fires when 5xx error rate exceeds 5% over a 5-minute window for any service
+        - alert: HighErrorRate
+          expr: |
+            (
+              rate(django_http_responses_total_by_status_view_method_total{status=~"5.."}[5m])
+              /
+              rate(django_http_responses_total_by_status_view_method_total[5m])
+            ) > 0.05
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "High error rate on {{ $labels.job }}"
+            description: "Error rate is {{ $value | humanizePercentage }} on {{ $labels.job }} (view: {{ $labels.view }})"
+
+        # Fires when a service has had 0 requests for 5 minutes (may be down)
+        - alert: ServiceNoTraffic
+          expr: |
+            rate(django_http_responses_total_by_status_view_method_total[5m]) == 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "No traffic on {{ $labels.job }}"
+            description: "{{ $labels.job }} has received no requests in the last 5 minutes"
+
+    - name: ecommerce.latency
+      interval: 30s
+      rules:
+        # Fires when 95th percentile latency exceeds 2 seconds
+        - alert: SlowResponses
+          expr: |
+            histogram_quantile(0.95,
+              rate(django_http_ajaxrequests_total_bucket[5m])
+            ) > 2
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Slow responses on {{ $labels.job }}"
+            description: "P95 latency is {{ $value }}s on {{ $labels.job }}"

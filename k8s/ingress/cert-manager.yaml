@@ -1,0 +1,98 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# cert-manager — Self-Signed TLS for local development
+#
+# PREREQUISITE: cert-manager must be installed in the cluster first.
+#   helm repo add jetstack https://charts.jetstack.io
+#   helm repo update
+#   helm install cert-manager jetstack/cert-manager \
+#     --namespace cert-manager --create-namespace \
+#     --set crds.enabled=true
+#
+# Three resources, applied in order:
+#   1. SelfSigned Issuer  — bootstraps a root CA key pair
+#   2. CA root Certificate — the self-signed root cert (stored as a Secret)
+#   3. CA Issuer          — uses the root CA to sign our domain certificate
+#   4. Certificate        — the actual TLS cert for ecommerce.local
+#
+# The Ingress references Secret: ecommerce-tls (created by resource 4).
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── 1. SelfSigned Issuer ─────────────────────────────────────────────────────
+# A SelfSigned Issuer has no external CA — it signs certificates with the
+# private key of the certificate itself. We use it only to bootstrap the
+# root CA. It cannot issue domain certificates directly (no Subject Alt Names).
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: selfsigned-issuer
+  namespace: ecommerce
+spec:
+  selfSigned: {}
+
+---
+
+# ── 2. Root CA Certificate ───────────────────────────────────────────────────
+# Ask the SelfSigned Issuer to create a CA key pair.
+# isCA: true marks this cert as a Certificate Authority — it can sign others.
+# The resulting cert + key are stored in Secret: ecommerce-ca-secret.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: ecommerce-ca
+  namespace: ecommerce
+spec:
+  isCA: true
+  commonName: ecommerce-local-ca
+  secretName: ecommerce-ca-secret       # cert-manager writes the CA cert + key here
+  duration: 87600h                      # 10 years — root CAs outlive leaf certs
+  privateKey:
+    algorithm: ECDSA                    # ECDSA is faster than RSA and equally secure
+    size: 256                           # P-256 curve — the standard for ECDSA
+  issuerRef:
+    name: selfsigned-issuer             # signed by the SelfSigned Issuer above
+    kind: Issuer
+
+---
+
+# ── 3. CA Issuer ─────────────────────────────────────────────────────────────
+# Now that we have a real CA key pair (in ecommerce-ca-secret), create a CA
+# Issuer that uses it to sign domain certificates.
+# This is the Issuer referenced by the Certificate below.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: ecommerce-ca-issuer
+  namespace: ecommerce
+spec:
+  ca:
+    secretName: ecommerce-ca-secret     # reads the CA cert + key from this Secret
+
+---
+
+# ── 4. TLS Certificate for ecommerce.local ───────────────────────────────────
+# This is the certificate Nginx actually serves to Flutter/browsers.
+# cert-manager signs it using the CA Issuer above and stores it in
+# Secret: ecommerce-tls — the same secretName referenced in ingress.yaml.
+#
+# When cert-manager detects the cert is within renewBefore of expiry,
+# it automatically generates a new cert and updates the Secret.
+# Nginx picks up the new cert without a restart (Ingress Controller watches Secrets).
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: ecommerce-tls-cert
+  namespace: ecommerce
+spec:
+  secretName: ecommerce-tls            # must match tls.secretName in ingress.yaml
+  duration: 8760h                      # 1 year
+  renewBefore: 720h                    # auto-renew 30 days before expiry
+  commonName: ecommerce.local
+  dnsNames:
+    - ecommerce.local                  # primary domain Flutter app calls
+    - "*.ecommerce.local"              # wildcard covers subdomains if needed later
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: ecommerce-ca-issuer          # signed by our local CA
+    kind: Issuer

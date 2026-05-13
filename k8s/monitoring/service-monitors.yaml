@@ -1,0 +1,88 @@
+
+# ServiceMonitors tell Prometheus which pods to scrape and how.
+# Each entry corresponds to one Django service's /metrics endpoint.
+
+# ── Auth Service ──────────────────────────────────────────────────────────────
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: auth-service-monitor
+  namespace: ecommerce
+  labels:
+    release: monitoring        # must match the Helm release name
+spec:
+  selector:
+    matchLabels:
+      app: auth-service        # matches the Service label in auth-service.yaml
+  endpoints:
+    - port: http               # must match the Service port name
+      path: /metrics
+      interval: 15s
+---
+# ── Product Service ───────────────────────────────────────────────────────────
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: product-service-monitor
+  namespace: ecommerce
+  labels:
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: product-service
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+---
+# ── Order Service ─────────────────────────────────────────────────────────────
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: order-service-monitor
+  namespace: ecommerce
+  labels:
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: order-service
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+---
+# ── Cart Service ──────────────────────────────────────────────────────────────
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cart-service-monitor
+  namespace: ecommerce
+  labels:
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: cart-service
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+---
+# ── Inventory Service ─────────────────────────────────────────────────────────
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: inventory-service-monitor
+  namespace: ecommerce
+  labels:
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: inventory-service
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s

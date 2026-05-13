@@ -1,0 +1,73 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Kubernetes Job — creates the orders.placed Kafka topic
+#
+# A Job runs a pod ONCE to completion, then stops. It is not restarted like a
+# Deployment. Use it for one-time setup tasks that must run against a live
+# cluster resource (here: Kafka broker).
+#
+# Run this after kafka-0 is 1/1 Running:
+#   kubectl apply -f k8s/kafka/kafka-topics-job.yaml
+#   kubectl logs -n ecommerce job/kafka-create-topics
+# ─────────────────────────────────────────────────────────────────────────────
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-create-topics
+  namespace: ecommerce
+spec:
+  # If the pod fails, retry up to 3 times before marking the Job as failed.
+  backoffLimit: 3
+
+  template:
+    spec:
+      # restartPolicy for Job pods must be Never or OnFailure.
+      # Never  → on failure, create a NEW pod (old pod kept for log inspection)
+      # OnFailure → restart the same pod's container
+      # We use Never so we can inspect logs of failed attempts.
+      restartPolicy: Never
+
+      containers:
+      - name: kafka-topic-creator
+        # Use the same image as the broker — it already has kafka-topics.sh
+        image: apache/kafka:3.7.0
+        command:
+        - /bin/bash
+        - -c
+        - |
+          echo "Waiting for Kafka broker to be ready..."
+
+          # Poll until the broker accepts connections.
+          # kafka-topics.sh --list will exit 0 when the broker is up.
+          until /opt/kafka/bin/kafka-topics.sh \
+            --bootstrap-server kafka:9092 \
+            --list > /dev/null 2>&1; do
+            echo "Broker not ready yet, retrying in 5s..."
+            sleep 5
+          done
+
+          echo "Broker is ready. Creating topics..."
+
+          # Create orders.placed topic.
+          # --if-not-exists → idempotent: safe to run the Job multiple times.
+          /opt/kafka/bin/kafka-topics.sh \
+            --bootstrap-server kafka:9092 \
+            --create \
+            --if-not-exists \
+            --topic orders.placed \
+            --partitions 3 \
+            --replication-factor 1 \
+            --config retention.ms=604800000
+
+          echo "Topic creation complete. Listing all topics:"
+          /opt/kafka/bin/kafka-topics.sh \
+            --bootstrap-server kafka:9092 \
+            --list
+
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"

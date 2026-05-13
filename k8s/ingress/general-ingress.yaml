@@ -1,0 +1,93 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: general-ingress
+  namespace: ecommerce
+  annotations:
+
+    # ── Controller Selection ────────────────────────────────────────────────
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+
+    # ── CORS ────────────────────────────────────────────────────────────────
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "http://localhost,http://localhost:3000,http://localhost:8080"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "Authorization, Content-Type, Accept, X-Requested-With"
+    nginx.ingress.kubernetes.io/cors-allow-credentials: "true"
+    nginx.ingress.kubernetes.io/cors-max-age: "3600"
+
+    # ── General API Rate Limit (for all API endpoints) ─────────────────────────────
+    nginx.ingress.kubernetes.io/limit-req-zone: "api_limit"
+    nginx.ingress.kubernetes.io/limit-req-burst: "30"
+    nginx.ingress.kubernetes.io/limit-req-nodelay: "true"
+    nginx.ingress.kubernetes.io/limit-req-status-code: "429"
+
+spec:
+  # ── TLS ───────────────────────────────────────────────────────────────────
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - ecommerce.local
+      secretName: ecommerce-tls
+  
+  # ── Routing Rules ─────────────────────────────────────────────────────────
+  rules:
+    - host: ecommerce.local
+      http:
+        paths:
+          # ── Product Service ───────────────────────────────────────────────
+          # Product catalog, search, product images.
+          - path: /api/products/
+            pathType: Prefix
+            backend:
+              service:
+                name: product-service
+                port:
+                  number: 8002
+
+          # Recommendations are at /api/recommendations/ in product-service.
+          - path: /api/recommendations/
+            pathType: Prefix
+            backend:
+              service:
+                name: product-service
+                port:
+                  number: 8002
+          
+          # ── Cart Service ──────────────────────────────────────────────────
+          # Cart, cart items, and wishlist.
+          # All mounted under /api/cart/ after the urls.py fix.
+          - path: /api/cart/
+            pathType: Prefix
+            backend:
+              service:
+                name: cart-service
+                port:
+                  number: 8004
+
+          # ── Inventory Service ─────────────────────────────────────────────
+          # Stock locations, warehouse management, analytics, POS.
+          - path: /api/inventory/
+            pathType: Prefix
+            backend:
+              service:
+                name: inventory-service
+                port:
+                  number: 8005
+
+          - path: /api/analytics/
+            pathType: Prefix
+            backend:
+              service:
+                name: inventory-service
+                port:
+                  number: 8005
+
+          - path: /api/pos/
+            pathType: Prefix
+            backend:
+              service:
+                name: inventory-service
+                port:
+                  number: 8005

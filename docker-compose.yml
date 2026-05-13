@@ -1,0 +1,180 @@
+
+# ─── Shared health-check defaults ────────────────────────────────────────────
+x-postgres-healthcheck: &postgres-healthcheck
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+    start_period: 10s
+
+services:
+  # _______________________ Databases _______________________
+  auth-db:
+    image: postgres:16-alpine
+    <<: *postgres-healthcheck
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: auth_db
+    volumes:
+      - auth-db-data:/var/lib/postgresql/data
+  
+  product-db:
+    image: postgres:16-alpine
+    <<: *postgres-healthcheck
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: product_db
+    volumes:
+      - product-db-data:/var/lib/postgresql/data
+  
+  order-db:
+    image: postgres:16-alpine
+    <<: *postgres-healthcheck
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: order_db
+    volumes:
+      - order-db-data:/var/lib/postgresql/data
+  
+  cart-db:
+    image: postgres:16-alpine
+    <<: *postgres-healthcheck
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: cart_db
+    volumes:
+      - cart-db-data:/var/lib/postgresql/data
+
+  inventory-db:
+    image: postgres:16-alpine
+    <<: *postgres-healthcheck
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: inventory_db
+    volumes:
+      - inventory-db-data:/var/lib/postgresql/data
+  
+  # _______________________ Message Broker _______________________
+
+
+  # ______________________ Caching Layer _______________________
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    
+
+
+ # _______________________ Application Services _______________________
+  auth-service:
+    build: ./auth-service
+    ports:
+      - "8001:8001"
+    environment:
+      DB_HOST: auth-db
+      DB_NAME: auth_db
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    env_file: ./auth-service/.env
+    command: sh -c "python manage.py migrate --noinput &&
+     gunicorn auth_service.wsgi:application 
+     --bind 0.0.0.0:8001 --workers 2 --timeout 60"
+    depends_on:
+      auth-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+  
+  product-service:
+    build: ./product-service
+    ports:
+      - "8002:8002"
+    environment:
+      DB_HOST: product-db
+      DB_NAME: product_db
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    env_file: ./product-service/.env
+    command: sh -c "python manage.py migrate --noinput &&
+     gunicorn product_service.wsgi:application 
+     --bind 0.0.0.0:8002 --workers 2 --timeout 60"
+    depends_on:
+      product-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  order-service:
+    build: ./order-service
+    ports:
+      - "8003:8003"
+    environment:
+      DB_HOST: order-db
+      DB_NAME: order_db
+      CELERY_BROKER_URL: redis://redis:6379/2
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    env_file: ./order-service/.env
+    command: sh -c "python manage.py migrate --noinput &&
+     gunicorn order_service.wsgi:application 
+     --bind 0.0.0.0:8003 --workers 2 --timeout 60"
+    depends_on:
+      order-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+  
+
+  cart-service:
+    build: ./cart-service
+    ports:
+      - "8004:8004"
+    environment:
+      DB_HOST: cart-db
+      DB_NAME: cart_db
+    env_file: ./cart-service/.env
+    command: sh -c "python manage.py migrate --noinput &&
+     gunicorn cart_service.wsgi:application 
+     --bind 0.0.0.0:8004 --workers 2 --timeout 60"
+    depends_on:
+      cart-db:
+        condition: service_healthy
+      
+
+
+  inventory-service:
+    build: ./inventory-service
+    ports:
+      - "8005:8005"
+    environment:
+      DB_HOST: inventory-db
+      DB_NAME: inventory_db
+    env_file: ./inventory-service/.env
+    command: sh -c "python manage.py migrate --noinput &&
+     gunicorn inventory_service.wsgi:application 
+     --bind 0.0.0.0:8005 --workers 2 --timeout 60"
+    depends_on:
+      inventory-db:
+        condition: service_healthy
+    
+
+
+volumes:
+  auth-db-data:
+  redis-data:
+  product-db-data:
+  order-db-data:
+  cart-db-data:
+  inventory-db-data:

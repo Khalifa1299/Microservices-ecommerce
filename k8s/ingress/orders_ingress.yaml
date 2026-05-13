@@ -1,0 +1,68 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: orders-ingress
+  namespace: ecommerce
+  annotations:
+
+    # ── Controller Selection ────────────────────────────────────────────────
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+
+    # ── CORS ────────────────────────────────────────────────────────────────
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "http://localhost,http://localhost:3000,http://localhost:8080"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "Authorization, Content-Type, Accept, X-Requested-With"
+    nginx.ingress.kubernetes.io/cors-allow-credentials: "true"
+    nginx.ingress.kubernetes.io/cors-max-age: "3600"
+
+    # ── Order Rate Limit ───────────────────────────────────────────────────────
+    # 2 r/s — order creation is expensive (DB writes + payment gateway calls).
+    # Burst of 5 allows a small spike without opening the door to abuse.
+    nginx.ingress.kubernetes.io/limit-req-zone: "order_limit"
+    nginx.ingress.kubernetes.io/limit-req-burst: "5"
+    nginx.ingress.kubernetes.io/limit-req-nodelay: "true"
+    nginx.ingress.kubernetes.io/limit-req-status-code: "429"
+
+    # ── Proxy Timeouts ──────────────────────────────────────────────────────
+    # Per-Ingress overrides of the ConfigMap defaults.
+    # Order service may be slow on payment processing — give it more time.
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+
+spec:
+  # ── TLS ───────────────────────────────────────────────────────────────────
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - ecommerce.local
+      secretName: ecommerce-tls
+  
+  # ── Routing Rules ─────────────────────────────────────────────────────────
+  rules:
+    - host: ecommerce.local
+      http:
+        paths:
+        - path: /api/orders/
+          pathType: Prefix
+          backend:
+            service:
+              name: order-service
+              port:
+                number: 8003
+        - path: /api/payments/
+          pathType: Prefix
+          backend:
+            service:
+              name: order-service
+              port:
+                number: 8003
+        - path: /api/shipping/
+          pathType: Prefix
+          backend:
+            service:
+              name: order-service
+              port:
+                number: 8003

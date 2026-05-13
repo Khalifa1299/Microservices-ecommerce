@@ -1,0 +1,214 @@
+# _____________________________ Deployment for Order Service _____________________________
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service
+  namespace: ecommerce
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: order-service
+  template:
+    metadata:
+      labels:
+        app: order-service
+    spec:
+      initContainers:
+      - name: migrate
+        image: khalifa035/order-service:latest
+        command: ["python", "manage.py", "migrate", "--noinput"]
+        env:
+        - name: DB_HOST
+          value: order-db
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          value: order_db
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: DB_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: order-service-secret
+              key: DB_PASSWORD
+        - name: SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: order-service-secret
+              key: SECRET_KEY
+      containers:
+      - name: order-service
+        image: khalifa035/order-service:latest
+        env:
+        - name: DB_HOST
+          value: order-db
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          value: order_db
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: DB_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: order-service-secret
+              key: DB_PASSWORD
+        - name: SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: order-service-secret
+              key: SECRET_KEY
+        - name: PAYMOB_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: order-service-secret
+              key: PAYMOB_API_KEY
+        - name: PAYMOB_INTEGRATION_ID
+          valueFrom:
+            secretKeyRef:
+              name: order-service-secret
+              key: PAYMOB_INTEGRATION_ID
+        - name: PAYMOB_IFRAME_ID
+          valueFrom:
+            secretKeyRef:
+              name: order-service-secret
+              key: PAYMOB_IFRAME_ID
+        - name: PAYMOB_HMAC_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: order-service-secret
+              key: PAYMOB_HMAC_SECRET
+        - name: CELERY_BROKER_URL
+          value: "redis://redis:6379/2"
+        - name: CELERY_RESULT_BACKEND
+          value: "redis://redis:6379/0"
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          value: "kafka:9092"
+        - name: DEBUG
+          value: "False"
+        ports:
+        - containerPort: 8003
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        readinessProbe:
+          tcpSocket:
+            port: 8003
+          initialDelaySeconds: 30
+          periodSeconds: 10
+
+---
+
+# _____________________________ Service for Order Service _____________________________
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-service
+  namespace: ecommerce
+  labels:
+    app: order-service
+spec:
+  selector:
+    app: order-service
+  ports:
+  - name: http
+    protocol: TCP
+    port: 8003
+    targetPort: 8003
+
+---
+
+# _____________________________ Celery Worker for Order Service _____________________________
+#
+# Processes async tasks: order confirmation emails, payment status polling,
+# shipment tracking updates.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-service-worker
+  namespace: ecommerce
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: order-service-worker
+  template:
+    metadata:
+      labels:
+        app: order-service-worker
+    spec:
+      containers:
+      - name: celery-worker
+        image: khalifa035/order-service:latest
+        command: ["celery", "-A", "order_service", "worker", "--loglevel=info", "--concurrency=2"]
+        env:
+        - name: DB_HOST
+          value: order-db
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          value: order_db
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: DB_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: order-service-secret
+              key: DB_PASSWORD
+        - name: SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: order-service-secret
+              key: SECRET_KEY
+        - name: PAYMOB_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: order-service-secret
+              key: PAYMOB_API_KEY
+        - name: PAYMOB_INTEGRATION_ID
+          valueFrom:
+            secretKeyRef:
+              name: order-service-secret
+              key: PAYMOB_INTEGRATION_ID
+        - name: PAYMOB_IFRAME_ID
+          valueFrom:
+            secretKeyRef:
+              name: order-service-secret
+              key: PAYMOB_IFRAME_ID
+        - name: PAYMOB_HMAC_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: order-service-secret
+              key: PAYMOB_HMAC_SECRET
+        - name: CELERY_BROKER_URL
+          value: "redis://redis:6379/2"
+        - name: CELERY_RESULT_BACKEND
+          value: "redis://redis:6379/0"
+        - name: DEBUG
+          value: "False"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "250m"
+        # No readinessProbe — workers don't serve HTTP traffic, no Service routes to them.
+        # A livenessProbe will be added in Phase 6 (monitoring).

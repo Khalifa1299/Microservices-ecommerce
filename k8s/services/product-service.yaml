@@ -1,0 +1,370 @@
+# _____________________________ Deployment for Product Service _____________________________
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: product-service
+  namespace: ecommerce
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: product-service
+  template:
+    metadata:
+      labels:
+        app: product-service
+    spec:
+      initContainers:
+      - name: migrate
+        image: khalifa035/product-service:latest
+        command: ["python", "manage.py", "migrate", "--noinput"]
+        env:
+        - name: DB_HOST
+          value: product-db
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          value: product_db
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: DB_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: product-service-secret
+              key: DB_PASSWORD
+        - name: SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: product-service-secret
+              key: SECRET_KEY
+        - name: ALGOLIA_APPLICATION_ID
+          valueFrom:
+            secretKeyRef:
+              name: product-service-secret
+              key: ALGOLIA_APPLICATION_ID
+        - name: ALGOLIA_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: product-service-secret
+              key: ALGOLIA_API_KEY
+        - name: ALGOLIA_SEARCH_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: product-service-secret
+              key: ALGOLIA_SEARCH_API_KEY
+      containers:
+      - name: product-service
+        image: khalifa035/product-service:latest
+        env:
+        - name: DB_HOST
+          value: product-db
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          value: product_db
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: DB_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: product-service-secret
+              key: DB_PASSWORD
+        - name: SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: product-service-secret
+              key: SECRET_KEY
+        - name: ALGOLIA_APPLICATION_ID
+          valueFrom:
+            secretKeyRef:
+              name: product-service-secret
+              key: ALGOLIA_APPLICATION_ID
+        - name: ALGOLIA_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: product-service-secret
+              key: ALGOLIA_API_KEY
+        - name: ALGOLIA_SEARCH_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: product-service-secret
+              key: ALGOLIA_SEARCH_API_KEY
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          value: "kafka:9092"
+        - name: CELERY_BROKER_URL
+          value: "redis://redis:6379/1"
+        - name: CELERY_RESULT_BACKEND
+          value: "redis://redis:6379/0"
+        - name: DEBUG
+          value: "False"
+        ports:
+        - containerPort: 8002
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        readinessProbe:
+          tcpSocket:
+            port: 8002
+          initialDelaySeconds: 30
+          periodSeconds: 10
+
+---
+
+# _____________________________ Service for Product Service _____________________________
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: product-service
+  namespace: ecommerce
+  labels:
+    app: product-service
+spec:
+  selector:
+    app: product-service
+  ports:
+  - name: http
+    protocol: TCP
+    port: 8002
+    targetPort: 8002
+
+---
+
+# _____________________________ Celery Worker for Product Service _____________________________
+#
+# Processes async tasks: Algolia re-indexing on product updates, recommendation cache clearing.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: product-service-worker
+  namespace: ecommerce
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: product-service-worker
+  template:
+    metadata:
+      labels:
+        app: product-service-worker
+    spec:
+      containers:
+      - name: celery-worker
+        image: khalifa035/product-service:latest
+        command: ["celery", "-A", "product_service", "worker", "--loglevel=info", "--concurrency=2"]
+        env:
+        - name: DB_HOST
+          value: product-db
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          value: product_db
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: DB_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: product-service-secret
+              key: DB_PASSWORD
+        - name: SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: product-service-secret
+              key: SECRET_KEY
+        - name: ALGOLIA_APPLICATION_ID
+          valueFrom:
+            secretKeyRef:
+              name: product-service-secret
+              key: ALGOLIA_APPLICATION_ID
+        - name: ALGOLIA_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: product-service-secret
+              key: ALGOLIA_API_KEY
+        - name: ALGOLIA_SEARCH_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: product-service-secret
+              key: ALGOLIA_SEARCH_API_KEY
+        - name: CELERY_BROKER_URL
+          value: "redis://redis:6379/1"
+        - name: CELERY_RESULT_BACKEND
+          value: "redis://redis:6379/0"
+        - name: DEBUG
+          value: "False"
+        resources:
+          requests:
+            memory: "512Mi"   
+            cpu: "100m"
+          limits:
+            memory: "1Gi"
+            cpu: "250m"
+        
+---
+
+# _____________________________ Celery Beat for Product Service _____________________________
+#
+# Fires periodic tasks into the Redis queue on a crontab schedule:
+#   - compute_product_similarities    : daily at 02:00 UTC
+#   - clear_expired_recommendation_cache : every hour
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: product-service-beat
+  namespace: ecommerce
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: product-service-beat
+  template:
+    metadata:
+      labels:
+        app: product-service-beat
+    spec:
+      containers:
+      - name: celery-beat
+        image: khalifa035/product-service:latest
+        command: ["celery", "-A", "product_service", "beat", "--loglevel=info"]
+        env:
+        - name: DB_HOST
+          value: product-db
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          value: product_db
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: DB_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: product-service-secret
+              key: DB_PASSWORD
+        - name: SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: product-service-secret
+              key: SECRET_KEY
+        - name: ALGOLIA_APPLICATION_ID
+          valueFrom:
+            secretKeyRef:
+              name: product-service-secret
+              key: ALGOLIA_APPLICATION_ID
+        - name: ALGOLIA_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: product-service-secret
+              key: ALGOLIA_API_KEY
+        - name: ALGOLIA_SEARCH_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: product-service-secret
+              key: ALGOLIA_SEARCH_API_KEY
+        - name: CELERY_BROKER_URL
+          value: "redis://redis:6379/1"
+        - name: CELERY_RESULT_BACKEND
+          value: "redis://redis:6379/0"
+        - name: DEBUG
+          value: "False"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "50m"
+          limits:
+            memory: "512Mi"
+            cpu: "100m"
+
+---
+
+# _____________________________ Kafka Consumer for Product Service _____________________________
+#
+# Long-lived process: subscribes to orders.placed, builds product-pair co-purchase counts
+# that power the "Frequently Bought Together" recommendation feature.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: product-service-kafka-consumer
+  namespace: ecommerce
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: product-service-kafka-consumer
+  template:
+    metadata:
+      labels:
+        app: product-service-kafka-consumer
+    spec:
+      containers:
+      - name: kafka-consumer
+        image: khalifa035/product-service:latest
+        command: ["python", "manage.py", "consume_orders"]
+        env:
+        - name: DB_HOST
+          value: product-db
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          value: product_db
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: DB_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: product-service-secret
+              key: DB_PASSWORD
+        - name: SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: product-service-secret
+              key: SECRET_KEY
+        - name: ALGOLIA_APPLICATION_ID
+          valueFrom:
+            secretKeyRef:
+              name: product-service-secret
+              key: ALGOLIA_APPLICATION_ID
+        - name: ALGOLIA_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: product-service-secret
+              key: ALGOLIA_API_KEY
+        - name: ALGOLIA_SEARCH_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: product-service-secret
+              key: ALGOLIA_SEARCH_API_KEY
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          value: "kafka:9092"
+        - name: DEBUG
+          value: "False"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "50m"
+          limits:
+            memory: "256Mi"
+            cpu: "100m"
+        # No readinessProbe — consumers don't serve HTTP traffic.

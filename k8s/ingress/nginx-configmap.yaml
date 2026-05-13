@@ -1,0 +1,70 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Nginx Ingress Controller — Global Configuration
+#
+# Read by the nginx-ingress-controller pod at startup.
+# Translates into nginx.conf http{} block — applies to ALL Ingress resources.
+#
+# Name and namespace are fixed — the controller looks for exactly this ConfigMap.
+# ─────────────────────────────────────────────────────────────────────────────
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-configuration
+  namespace: ingress-nginx
+data:
+
+  # ── Rate Limiting Zones ───────────────────────────────────────────────────
+  # Zones are defined here (global http block) and referenced per-path in
+  # ingress.yaml via nginx.ingress.kubernetes.io/limit-req-zone annotations.
+  #
+  # $binary_remote_addr — client IP in binary (4 bytes IPv4). More memory-
+  #   efficient than $remote_addr (string). Each zone entry costs ~64 bytes,
+  #   so 10m ≈ 160,000 tracked IPs before old entries are evicted (LRU).
+  #
+  # Three zones with different strictness per traffic type:
+  #   auth_limit   — 5 r/s  : login/signup are brute-force targets
+  #   api_limit    — 20 r/s : general browsing/cart — generous but guarded
+  #   order_limit  — 2 r/s  : order creation is expensive (DB + payment calls)
+  limit-req-zones: |
+    $binary_remote_addr zone=auth_limit:10m rate=5r/s;
+    $binary_remote_addr zone=api_limit:10m rate=20r/s;
+    $binary_remote_addr zone=order_limit:10m rate=2r/s;
+
+  # ── Proxy Timeouts ────────────────────────────────────────────────────────
+  # How long Nginx waits at each phase of proxying to the backend.
+  # Django with cold-start DB migrations can be slow — 60s avoids premature
+  # 504 Gateway Timeout before the service is actually ready.
+  proxy-connect-timeout: "60"    # Time to establish TCP connection to backend
+  proxy-send-timeout: "60"       # Time to send the full request to backend
+  proxy-read-timeout: "60"       # Time to receive the full response from backend
+
+  # ── Upload Body Size ──────────────────────────────────────────────────────
+  # Max request body size Nginx accepts. Product images can be large.
+  # 50m covers most use cases. If Django has its own size validation, this
+  # acts as an outer guard that rejects oversized requests before they even
+  # reach the service.
+  proxy-body-size: "50m"
+
+  # ── Real IP Forwarding ────────────────────────────────────────────────────
+  # Without this, request.META['REMOTE_ADDR'] in Django shows the Nginx pod
+  # IP, not the real client IP. Rate limiting and audit logs would be useless.
+  #
+  # use-forwarded-headers: tells Nginx to respect X-Forwarded-For from upstream
+  # compute-full-forwarded-for: builds the full chain of IPs (proxy hops) so
+  #   Django sees the real originating IP at position [0] in the chain.
+  #
+  # Django side (add to each service's settings.py in Phase 2 cleanup):
+  #   USE_X_FORWARDED_HOST = True
+  #   SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+  use-forwarded-headers: "true"
+  compute-full-forwarded-for: "true"
+
+  # ── CORS ──────────────────────────────────────────────────────────────────
+  # Enables CORS handling at the Nginx level for all Ingress resources.
+  # Actual allowed origins, methods, and headers are set per-Ingress via
+  # annotations in ingress.yaml — this just unlocks the feature.
+  #
+  # Once this is active: remove django-cors-headers from all services'
+  # INSTALLED_APPS and MIDDLEWARE (Phase 2 cleanup).
+  enable-cors: "true"

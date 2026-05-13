@@ -1,0 +1,69 @@
+
+# kube-prometheus-stack values
+# Applied with: helm install monitoring prometheus-community/kube-prometheus-stack \
+#   --namespace monitoring --create-namespace --values k8s/monitoring/values.yaml
+
+grafana:
+  adminPassword: "admin123"
+  image:
+    tag: "10.4.3"
+  service:
+    type: NodePort
+    nodePort: 32300
+  resources:
+    requests:
+      memory: 128Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 200m
+  # Grafana runs 551 DB migrations on first start — takes ~12 minutes on minikube.
+  # Default liveness probe kills it after 2.5 min. Give it 20 min before first check.
+  livenessProbe:
+    initialDelaySeconds: 1200
+    timeoutSeconds: 30
+    failureThreshold: 10
+  readinessProbe:
+    initialDelaySeconds: 120
+    timeoutSeconds: 1
+    failureThreshold: 3
+
+prometheus:
+  prometheusSpec:
+    retention: 15d
+    # Watch ALL namespaces for ServiceMonitors (not just 'monitoring')
+    serviceMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorNamespaceSelector: {}
+    serviceMonitorSelector: {}
+    resources:
+      requests:
+        memory: 400Mi
+        cpu: 200m
+      limits:
+        memory: 800Mi
+
+alertmanager:
+  alertmanagerSpec:
+    resources:
+      requests:
+        memory: 100Mi
+      limits:
+        memory: 200Mi
+
+# Disable components that need persistent volumes on minikube
+prometheusOperator:
+  admissionWebhooks:
+    enabled: false
+  tls:
+    enabled: false
+  resources:
+    requests:
+      memory: 100Mi
+    limits:
+      memory: 200Mi
+
+nodeExporter:
+  enabled: false
+
+kubeStateMetrics:
+  enabled: true
